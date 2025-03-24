@@ -22,8 +22,6 @@ def segment_mp3(input_file, input_folder = INPUT_FOLDER, output_folder= OUTPUT_F
     interval_samples = sr * TIME_INTERVAL
     num_intervals = int(np.floor(len(y) / interval_samples))
 
-    os.makedirs(output_folder, exist_ok= True)
-
     for i in range(IGNORE_MIN, num_intervals + 1):
         start_sample = i * interval_samples
         end_sample = (i + 1) * interval_samples
@@ -52,8 +50,10 @@ if __name__ == "__main__":
         for _,_,files in os.walk(INPUT_FOLDER + "\\" + genre):
             for i,file in enumerate(files):
                 # print(file, i)
+                os.makedirs(OUTPUT_FOLDER + "\\" + genre, exist_ok= True)
 
                 #segment_mp3(file, INPUT_FOLDER + "\\" + genre, OUTPUT_FOLDER + "\\" + genre)
+
                 p = multiprocessing.Process(target= segment_mp3, 
                                       args= (file, INPUT_FOLDER + "\\" + genre, OUTPUT_FOLDER + "\\" + genre))
                 processes.append(p)
