@@ -5,7 +5,9 @@ import multiprocessing
 import librosa
 import soundfile as sf
 
-TIME_INTERVAL = 60 # in seconds
+TIME_INTERVAL = 60  # in seconds
+IGNORE_MIN = 5      # in minutes
+
 OUTPUT_FOLDER = "processdata"
 INPUT_FOLDER = "data"
 
@@ -22,7 +24,7 @@ def segment_mp3(input_file, input_folder = INPUT_FOLDER, output_folder= OUTPUT_F
 
     os.makedirs(output_folder, exist_ok= True)
 
-    for i in range(num_intervals + 1):
+    for i in range(IGNORE_MIN, num_intervals + 1):
         start_sample = i * interval_samples
         end_sample = (i + 1) * interval_samples
         interval_audio = None
