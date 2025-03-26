@@ -2,74 +2,70 @@ import os
 import multiprocessing
 
 import numpy as np
-import matplotlib.pyplot as plt
-
 import csv
 
 import librosa
-import soundfile as sf
 
-TIME_INTERVAL = 10  # in seconds
+import gc
+
+TIME_INTERVAL = 60  # in seconds
 IGNORE_MIN = 1      # in minutes
+
+N_MFCC = 20
 
 OUTPUT_FOLDER = "processdata"
 INPUT_FOLDER = "data"
 
-class DataExtractor:
-    def __init__(self, n_mfcc = 20):
-        self.n_mfcc = n_mfcc
+FILE_PROCESS_LIMIT = 5
+PROCESS_LIMIT = 50 
+MEMORY_LIMIT = 150 * 1e+6   # In x MB
 
-    def load_data(self, y, sr):
-        self.y = y
-        self.sr = sr
-        self.feature_extract()
+MIN_AUDIO_LENGTH = 256  # If end parts are too small, skip them
 
-    def feature_extract(self):
-        # Tempo information
-        self.tempo = librosa.feature.tempo(y=self.y, sr=self.sr).round()
+def feature_extract(y, sr, n_mfcc = 20):
+    # Tempo information
+    tempo = librosa.feature.tempo(y=y, sr=sr).round()
 
-        # Separate harmonic and percussive components, Tonnetz
-        self.y_harmonic, self.y_percussive = librosa.effects.hpss(self.y)
-        self.tonnetz = librosa.feature.tonnetz(y=self.y, sr=self.sr)
+    # Separate harmonic and percussive components, Tonnetz
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+    tonnetz = librosa.feature.tonnetz(y=y, sr=sr)
 
-        # Mathematical features
-        features_list = {}
+    # Mathematical features
+    features_list = {}
 
-        features_list['tempo'] = [self.tempo.min(), self.tempo.mean(), self.tempo.max(), self.tempo.var()]
-        features_list['y_harmoic'] = [self.y_harmonic.min(), self.y_harmonic.mean(), self.y_harmonic.max(), self.y_harmonic.var()]
-        features_list['y_percussive'] = [self.y_percussive.min(), self.y_percussive.mean(), self.y_percussive.max(), self.y_percussive.var()]
-        features_list['tonnetz'] = [self.tonnetz.min(), self.tonnetz.mean(), self.tonnetz.max(), self.tonnetz.var()]
+    features_list['tempo'] = [tempo.min(), tempo.mean(), tempo.max(), tempo.var()]
+    features_list['y_harmoic'] = [y_harmonic.min(), y_harmonic.mean(), y_harmonic.max(), y_harmonic.var()]
+    features_list['y_percussive'] = [y_percussive.min(), y_percussive.mean(), y_percussive.max(), y_percussive.var()]
+    features_list['tonnetz'] = [tonnetz.min(), tonnetz.mean(), tonnetz.max(), tonnetz.var()]
 
-        # Other Sound features
-        cstft=librosa.feature.chroma_stft(y=self.y, sr=self.sr)
-        features_list['cstft'] = [cstft.min(), cstft.mean(), cstft.max(), cstft.var()]
+    # Other Sound features
+    cstft=librosa.feature.chroma_stft(y=y, sr=sr)
+    features_list['cstft'] = [cstft.min(), cstft.mean(), cstft.max(), cstft.var()]
 
-        srms=librosa.feature.rms(y=self.y)
-        features_list['srms'] = [srms.min(), srms.mean(), srms.max(), srms.var()]
+    srms=librosa.feature.rms(y=y)
+    features_list['srms'] = [srms.min(), srms.mean(), srms.max(), srms.var()]
 
-        specband=librosa.feature.spectral_bandwidth(y=self.y, sr=self.sr)
-        features_list['specband'] = [specband.min(), specband.mean(), specband.max(), specband.var()]
+    specband=librosa.feature.spectral_bandwidth(y=y, sr=sr)
+    features_list['specband'] = [specband.min(), specband.mean(), specband.max(), specband.var()]
 
-        speccent=librosa.feature.spectral_centroid(y=self.y, sr=self.sr)
-        features_list['speccent'] = [speccent.min(), speccent.mean(), speccent.max(), speccent.var()]
+    speccent=librosa.feature.spectral_centroid(y=y, sr=sr)
+    features_list['speccent'] = [speccent.min(), speccent.mean(), speccent.max(), speccent.var()]
 
-        rolloff = librosa.feature.spectral_rolloff(y=self.y, sr=self.sr)
-        features_list['rolloff'] = [rolloff.min(), rolloff.mean(), rolloff.max(), rolloff.var()]
+    rolloff = librosa.feature.spectral_rolloff(y=y, sr=sr)
+    features_list['rolloff'] = [rolloff.min(), rolloff.mean(), rolloff.max(), rolloff.var()]
 
-        zero_crossing_rate = librosa.feature.zero_crossing_rate(y=self.y)
-        features_list['zero_crossing_rate'] = [zero_crossing_rate.min(), zero_crossing_rate.mean(), zero_crossing_rate.max(), zero_crossing_rate.var()]
+    zero_crossing_rate = librosa.feature.zero_crossing_rate(y=y)
+    features_list['zero_crossing_rate'] = [zero_crossing_rate.min(), zero_crossing_rate.mean(), zero_crossing_rate.max(), zero_crossing_rate.var()]
 
-        mfcc = librosa.feature.mfcc(y=self.y, sr=self.sr, n_mfcc= self.n_mfcc)
-        for i in range(self.n_mfcc):
-            features_list[f'mfcc_{i}'] = [mfcc[i].min(), mfcc[i].mean(), mfcc[i].max(), mfcc[i].var()]
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc= n_mfcc)
+    for i in range(n_mfcc):
+        features_list[f'mfcc_{i}'] = [mfcc[i].min(), mfcc[i].mean(), mfcc[i].max(), mfcc[i].var()]
 
-        self.features = features_list
-
-    def get_data(self, data_print = False):
-        flattened_list = []
-        for key in sorted(self.features.keys()):
-            flattened_list.extend(self.features[key])
-        return flattened_list
+    # key extends
+    flattened_list = []
+    for key in sorted(features_list.keys()):
+        flattened_list.extend(features_list[key])
+    return flattened_list
 
 def writer_process(queue, file_path):
     try:
@@ -83,21 +79,23 @@ def writer_process(queue, file_path):
     except Exception as e:
         print(f"Writer process error: {e}")
 
-def data_processor(y, sr, queue):
+def data_processor(y, sr, genre, queue):
     try:
-        DataExtrac = DataExtractor()
-        DataExtrac.load_data(y, sr)
-
-        X = DataExtrac.get_data()
+        X = feature_extract(y, sr, N_MFCC)
+        X.append(genre)
         queue.put(X)
+
+        del X, y
+        gc.collect()
     except Exception as e:
-        print(f"Processor error: {e}")
+        print(f"data Processor error: {e}")
 
 def segment_mp3(input_file, input_folder = INPUT_FOLDER, output_folder= OUTPUT_FOLDER):
     output_file = input_file.split('.')[0] + '.csv'
+    genre = input_folder.split('\\')[-1]
 
     queue = multiprocessing.Queue()
-    writer = multiprocessing.Process(target=writer_process, args=(queue, output_folder + '\\' + output_file))
+    writer = multiprocessing.Process(target=writer_process, args=(queue, output_folder + "\\" + output_file))
     writer.start()
 
     try:
@@ -111,6 +109,7 @@ def segment_mp3(input_file, input_folder = INPUT_FOLDER, output_folder= OUTPUT_F
     num_intervals = int(np.floor(len(y) / interval_samples))
 
     processes = []
+    process_count = 0
     for i in range(IGNORE_MIN, num_intervals + 1):
         start_sample = i * interval_samples
         end_sample = (i + 1) * interval_samples
@@ -123,12 +122,25 @@ def segment_mp3(input_file, input_folder = INPUT_FOLDER, output_folder= OUTPUT_F
             interval_audio = y[start_sample:]
 
         # Save the output
-        # output_file = output_folder + '\\' + input_file.split('.')[0] + f"_{i+1}.mp3"
+        # output_file = output_folder + "\\" + input_file.split('.')[0] + f"_{i+1}.mp3"
         # sf.write(output_file, interval_audio, sr)
 
-        p = multiprocessing.Process(target=data_processor, args=(interval_audio, sr, queue))
-        processes.append(p)
-        p.start()
+        if(process_count == PROCESS_LIMIT):
+            for p in processes:
+                p.join()
+            processes.clear()
+            process_count = 0
+
+        if(len(interval_audio) >= MIN_AUDIO_LENGTH):
+            p = multiprocessing.Process(target=data_processor, args=(interval_audio, sr, genre, queue), 
+                                        daemon= True)
+            process_count += 1
+
+            processes.append(p)        
+            p.start()
+
+        del interval_audio
+        gc.collect()
 
     for p in processes:
         p.join()
@@ -136,31 +148,52 @@ def segment_mp3(input_file, input_folder = INPUT_FOLDER, output_folder= OUTPUT_F
     queue.put(None)  # Sentinel to signal writer to stop
     writer.join()
 
+    del y
+    gc.collect()
     print(f"Audio file '{input_file}' split and saved to '{output_folder}' successfully.")
 
 if __name__ == "__main__":
     genres= os.listdir(INPUT_FOLDER)
-    processes = []
     
     for genre in genres:
-        print("Genre:",genre)
-        #args = []
-
         for _,_,files in os.walk(INPUT_FOLDER + "\\" + genre):
-            for i,file in enumerate(files):
-                # print(file, i)
-                os.makedirs(OUTPUT_FOLDER + "\\" + genre, exist_ok= True)
+            os.makedirs(OUTPUT_FOLDER + "\\" + genre, exist_ok= True)
 
-                #segment_mp3(file, INPUT_FOLDER + "\\" + genre, OUTPUT_FOLDER + "\\" + genre)
+            processes = []
+            file_size_limits = 0
+            file_process_limits = 0
 
-                p = multiprocessing.Process(target= segment_mp3, 
-                                      args= (file, INPUT_FOLDER + "\\" + genre, OUTPUT_FOLDER + "\\" + genre))
+            for file in files:
+                # print(file)
+
+                # add the current memory Usage
+                file_size_limits += os.path.getsize(INPUT_FOLDER + "\\" + genre + "\\" + file)
+
+                # Limit memory
+                if(file_size_limits >= MEMORY_LIMIT or file_process_limits > FILE_PROCESS_LIMIT):
+                    print(file_size_limits / 1e+6)
+                    print(file_process_limits)
+
+                    for p in processes:
+                        p.join()
+                        gc.collect()
+
+                    processes.clear()
+                    file_process_limits = 0
+                    file_size_limits = os.path.getsize(INPUT_FOLDER + "\\" + genre + "\\" + file)
+
+                p = multiprocessing.Process(
+                    target= segment_mp3,
+                    args= (file, INPUT_FOLDER + "\\" + genre, OUTPUT_FOLDER + "\\" + genre)
+                )
+                file_process_limits += 1
+
                 processes.append(p)
                 p.start()
 
             for p in processes:
                 p.join()
+                gc.collect()
 
-            processes.clear()
-
+        print("Genre:", genre)
     print("Segments done!")
